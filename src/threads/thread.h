@@ -87,11 +87,15 @@ struct thread
     enum thread_status status;          /**< Thread state. */
     char name[16];                      /**< Name (for debugging purposes). */
     uint8_t *stack;                     /**< Saved stack pointer. */
-    int priority;                       /**< Priority. */
+    int64_t wake_up_tick;               /**< Used for alarm to keep track of wake up time */
+    struct int_list_elem_wrapper priority;                       /**< Priority. */
     struct list_elem allelem;           /**< List element for all threads list. */
+    struct lock *wait_for;
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /**< List element. */
+
+    struct list priorities;      /**< Keep track of priority donations */
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -125,6 +129,8 @@ const char *thread_name (void);
 
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
+void thread_yield_if_necessary(void);
+
 
 /** Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func (struct thread *t, void *aux);
@@ -132,10 +138,15 @@ void thread_foreach (thread_action_func *, void *);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
+int get_thread_priority(struct thread *);
 
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
+bool thread_elem_comp_priority(const struct list_elem *l_a, const struct list_elem *l_b, UNUSED void *aux);
+bool thread_elem_comp_alarm(const struct list_elem *l_a, const struct list_elem *l_b, UNUSED void *aux);
+
 #endif /**< threads/thread.h */
+

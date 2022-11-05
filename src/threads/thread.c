@@ -201,6 +201,10 @@ thread_create (const char *name, int priority,
   /* Add to run queue. */
   thread_unblock (t);
 
+  if (thread_get_priority() < get_thread_priority(t)){
+    thread_yield();
+  } 
+
   return tid;
 }
 
@@ -231,14 +235,14 @@ thread_block (void)
 void
 thread_unblock (struct thread *t) 
 {
-  enum intr_level old_level;
-
   ASSERT (is_thread (t));
-
-  old_level = intr_disable ();
+  
+  enum intr_level old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+
+  list_insert_ordered(&ready_list, &t->elem, thread_elem_comp_priority, NULL);
   t->status = THREAD_READY;
+
   intr_set_level (old_level);
 }
 
@@ -308,11 +312,20 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+    list_insert_ordered(&ready_list, &cur->elem, thread_elem_comp_priority, NULL);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
 }
+
+/** If the current thread do not own the highest priority, yield the CPU */
+void thread_yield_if_necessary(void){
+  if (list_empty(&ready_list)) return;
+  if (get_thread_priority(list_entry(list_begin(&ready_list), struct thread, elem)) <= thread_get_priority()) return;
+
+  thread_yield();
+}
+
 
 /** Invoke function 'func' on all threads, passing along 'aux'.
    This function must be called with interrupts off. */
@@ -335,14 +348,32 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
-  thread_current ()->priority = new_priority;
+  if (thread_mlfqs) return;
+
+  struct thread *curr = thread_current();
+  int old_priority = thread_get_priority();
+
+  enum intr_level old_level = intr_disable();
+  curr->priority.num = new_priority;
+  list_remove(&curr->priority.elem);
+  list_insert_ordered(&curr->priorities, &curr->priority.elem, int_elem_bigger_than, NULL);
+  intr_set_level(old_level);
+
+  if (old_priority <= new_priority) return;
+  thread_yield_if_necessary();
 }
 
 /** Returns the current thread's priority. */
 int
 thread_get_priority (void) 
 {
-  return thread_current ()->priority;
+  return get_thread_priority(thread_current());
+}
+
+/** Get one thread's pirority */
+int get_thread_priority(struct thread *thread){
+  struct list_elem *elem = list_begin(&thread->priorities);
+  return list_entry(elem, struct int_list_elem_wrapper, elem)->num;
 }
 
 /** Sets the current thread's nice value to NICE. */
@@ -461,8 +492,11 @@ init_thread (struct thread *t, const char *name, int priority)
   t->status = THREAD_BLOCKED;
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
-  t->priority = priority;
+  t->priority.num = priority;
   t->magic = THREAD_MAGIC;
+  list_init(&t->priorities);
+  list_push_back(&t->priorities, &t->priority.elem);
+  t->wait_for = NULL;
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
@@ -492,8 +526,11 @@ next_thread_to_run (void)
 {
   if (list_empty (&ready_list))
     return idle_thread;
-  else
+  else {
+    list_keep_sorted(&ready_list, thread_elem_comp_priority, NULL);
+
     return list_entry (list_pop_front (&ready_list), struct thread, elem);
+  }
 }
 
 /** Completes a thread switch by activating the new thread's page
@@ -578,6 +615,21 @@ allocate_tid (void)
 
   return tid;
 }
+
+bool thread_elem_comp_priority(const struct list_elem *l_a, const struct list_elem *l_b, UNUSED void *aux){
+  struct thread *t_a = list_entry(l_a, struct thread, elem);
+  struct thread *t_b = list_entry(l_b, struct thread, elem);
+
+  return get_thread_priority(t_a) > get_thread_priority(t_b);
+}
+
+bool thread_elem_comp_alarm(const struct list_elem *l_a, const struct list_elem *l_b, UNUSED void *aux){
+  struct thread *t_a = list_entry(l_a, struct thread, elem);
+  struct thread *t_b = list_entry(l_b, struct thread, elem);
+
+  return t_a->wake_up_tick < t_b->wake_up_tick;
+}
+
 
 /** Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */

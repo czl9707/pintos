@@ -7,6 +7,7 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
+#include "lib/kernel/list.h"
   
 /** See [8254] for hardware details of the 8254 timer chip. */
 
@@ -20,6 +21,9 @@
 /** Number of timer ticks since OS booted. */
 static int64_t ticks;
 
+/** a list keep track of all blocked threads */
+static struct list block_thread_list;
+
 /** Number of loops per timer tick.
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
@@ -28,7 +32,7 @@ static intr_handler_func timer_interrupt;
 static bool too_many_loops (unsigned loops);
 static void busy_wait (int64_t loops);
 static void real_time_sleep (int64_t num, int32_t denom);
-static void real_time_delay (int64_t num, int32_t denom);
+static void real_time_delay (int64_t num, int32_t denom); 
 
 /** Sets up the timer to interrupt TIMER_FREQ times per second,
    and registers the corresponding interrupt. */
@@ -37,6 +41,7 @@ timer_init (void)
 {
   pit_configure_channel (0, 2, TIMER_FREQ);
   intr_register_ext (0x20, timer_interrupt, "8254 Timer");
+  list_init(&block_thread_list);
 }
 
 /** Calibrates loops_per_tick, used to implement brief delays. */
@@ -87,13 +92,17 @@ timer_elapsed (int64_t then)
 /** Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on. */
 void
-timer_sleep (int64_t ticks) 
+timer_sleep (int64_t t) 
 {
-  int64_t start = timer_ticks ();
-
   ASSERT (intr_get_level () == INTR_ON);
-  while (timer_elapsed (start) < ticks) 
-    thread_yield ();
+  if (t <= 0) return;
+  
+  thread_current()->wake_up_tick = timer_ticks() + t;
+
+  enum intr_level old_level = intr_disable ();
+  list_insert_ordered(&block_thread_list, &(thread_current()->elem), thread_elem_comp_alarm, NULL);
+  thread_block();
+  intr_set_level (old_level);
 }
 
 /** Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -171,6 +180,32 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
+ 
+  struct list_elem *thread_iter = list_begin(&block_thread_list);
+  struct list_elem *thread_end_iter = list_end(&block_thread_list);
+
+  struct list_elem *to_remove_thread_elem;
+  struct thread* thread;
+
+  while (thread_iter != thread_end_iter){
+    thread = list_entry(thread_iter, struct thread, elem);
+
+    if (ticks >= thread->wake_up_tick){
+      to_remove_thread_elem = thread_iter;
+      thread_iter = list_next(thread_iter);
+
+      enum intr_level old_level = intr_disable();
+      list_remove(to_remove_thread_elem);
+      intr_set_level(old_level);
+
+      thread_unblock(thread);
+    }else{
+      break;
+    }
+  }
+
+
+
   thread_tick ();
 }
 

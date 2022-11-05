@@ -485,6 +485,22 @@ list_unique (struct list *list, struct list *duplicates,
       elem = next;
 }
 
+bool list_is_sorted(struct list *list, list_less_func *less, void *aux){
+  if (list_empty(list)) return true;
+
+  struct list_elem *start = list_begin(list);
+  struct list_elem *end = list_end(list);
+
+  return is_sorted(start, end, less, aux);
+}
+
+void list_keep_sorted(struct list *list, list_less_func *less, void *aux){
+  if (!list_is_sorted(list, less, aux)){
+    list_sort(list, less, aux);
+  }
+}
+
+
 /** Returns the element in LIST with the largest value according
    to LESS given auxiliary data AUX.  If there is more than one
    maximum, returns the one that appears earlier in the list.  If
@@ -521,4 +537,16 @@ list_min (struct list *list, list_less_func *less, void *aux)
           min = e; 
     }
   return min;
+}
+
+bool int_elem_bigger_than(const struct list_elem *l_a, const struct list_elem *l_b, UNUSED void *aux){
+  struct int_list_elem_wrapper *i_a = list_entry(l_a, struct int_list_elem_wrapper, elem);
+  struct int_list_elem_wrapper *i_b = list_entry(l_b, struct int_list_elem_wrapper, elem);
+  return i_a->num > i_b->num;
+}
+
+bool int_elem_smaller_than(const struct list_elem *l_a, const struct list_elem *l_b, UNUSED void *aux){
+  struct int_list_elem_wrapper *i_a = list_entry(l_a, struct int_list_elem_wrapper, elem);
+  struct int_list_elem_wrapper *i_b = list_entry(l_b, struct int_list_elem_wrapper, elem);
+  return i_a->num < i_b->num;
 }

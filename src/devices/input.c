@@ -50,3 +50,13 @@ input_full (void)
   ASSERT (intr_get_level () == INTR_OFF);
   return intq_full (&buffer);
 }
+
+/** Returns true if the input buffer is empty,
+   false otherwise.
+   Interrupts must be off. */
+bool
+input_empty(void)
+{
+  ASSERT (intr_get_level () == INTR_OFF);
+  return intq_empty (&buffer);
+}

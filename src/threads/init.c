@@ -54,6 +54,8 @@ static const char *swap_bdev_name;
 #endif
 #endif /**< FILESYS */
 
+#define MAXLINE 64
+
 /** -ul: Maximum number of pages to put into palloc's user pool. */
 static size_t user_page_limit = SIZE_MAX;
 
@@ -64,6 +66,7 @@ static char **read_command_line (void);
 static char **parse_options (char **argv);
 static void run_actions (char **argv);
 static void usage (void);
+static void run_interactive(void);
 
 #ifdef FILESYS
 static void locate_block_devices (void);
@@ -134,6 +137,7 @@ pintos_init (void)
     run_actions (argv);
   } else {
     // TODO: no command line passed to kernel. Run interactively 
+    run_interactive();
   }
 
   /* Finish up. */
@@ -431,3 +435,38 @@ locate_block_device (enum block_type role, const char *name)
     }
 }
 #endif
+
+static void run_interactive(){
+  static uint8_t cmdline[MAXLINE] = {};
+  static const uint8_t exitInput[MAXLINE] = {'e', 'x', 'i', 't'};
+  static const uint8_t whoAmiIInput[MAXLINE] = {'w', 'h', 'o', 'a', 'm', 'i'};
+  static int i;
+  uint8_t temp;
+
+  while(1){
+    printf("PKUOS> ");
+    i = 0;
+    
+
+    while (1)
+    {
+      input_init();
+      temp = input_getc();
+      cmdline[i] = temp;
+      if (temp == '\r') break;
+
+      putchar(temp);
+      i ++;
+    }
+    putchar('\n');
+    if (memcmp(cmdline, whoAmiIInput, i) == 0){
+      puts("123456789");
+    }else if (memcmp(cmdline, exitInput, i) == 0){
+      return;
+    }else{
+      puts("invalid command");
+    }
+    
+    memset(cmdline, 0, sizeof(cmdline));
+  }
+}

@@ -1,5 +1,6 @@
 #ifndef __LIB_KERNEL_LIST_H
 #define __LIB_KERNEL_LIST_H
+#include <debug.h>
 
 /** Doubly linked list.
 
@@ -100,6 +101,13 @@ struct list
     struct list_elem tail;      /**< List tail. */
   };
 
+struct int_list_elem_wrapper
+  {
+    int64_t num;
+    struct list_elem elem;
+  };
+
+
 /** Converts pointer to list element LIST_ELEM into a pointer to
    the structure that LIST_ELEM is embedded inside.  Supply the
    name of the outer structure STRUCT and the member name MEMBER
@@ -173,9 +181,14 @@ void list_insert_ordered (struct list *, struct list_elem *,
                           list_less_func *, void *aux);
 void list_unique (struct list *, struct list *duplicates,
                   list_less_func *, void *aux);
+bool list_is_sorted(struct list *, list_less_func *, void *aux);
+void list_keep_sorted(struct list*, list_less_func *, void *aux);
 
 /** Max and min. */
 struct list_elem *list_max (struct list *, list_less_func *, void *aux);
 struct list_elem *list_min (struct list *, list_less_func *, void *aux);
+
+bool int_elem_bigger_than(const struct list_elem *l_a, const struct list_elem *l_b, UNUSED void *aux);
+bool int_elem_smaller_than(const struct list_elem *l_a, const struct list_elem *l_b, UNUSED void *aux);
 
 #endif /**< lib/kernel/list.h */
