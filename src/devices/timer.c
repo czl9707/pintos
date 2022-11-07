@@ -204,7 +204,16 @@ timer_interrupt (struct intr_frame *args UNUSED)
     }
   }
 
+  if (thread_mlfqs){
+    thread_increment_cpu_by_one();
+    if (ticks % TIMER_FREQ == 0){
+      thread_update_load_avg();
+      thread_all_update_cpu();  
+      thread_all_update_priority();
+    }
 
+    if (ticks % 4 == 0) thread_update_priority(thread_current(), NULL);
+  }
 
   thread_tick ();
 }

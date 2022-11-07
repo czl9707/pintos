@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include <threads/fixed_point.h>
 
 /** States in a thread's life cycle. */
 enum thread_status
@@ -23,6 +24,10 @@ typedef int tid_t;
 #define PRI_MIN 0                       /**< Lowest priority. */
 #define PRI_DEFAULT 31                  /**< Default priority. */
 #define PRI_MAX 63                      /**< Highest priority. */
+
+#define NICE_MIN -20                      /**< Lowest priority. */
+#define NICE_DEFAULT 0                  /**< Default priority. */
+#define NICE_MAX 20                      /**< Highest priority. */
 
 /** A kernel thread or user process.
 
@@ -82,28 +87,32 @@ typedef int tid_t;
    blocked state is on a semaphore wait list. */
 struct thread
   {
-    /* Owned by thread.c. */
-    tid_t tid;                          /**< Thread identifier. */
-    enum thread_status status;          /**< Thread state. */
-    char name[16];                      /**< Name (for debugging purposes). */
-    uint8_t *stack;                     /**< Saved stack pointer. */
-    int64_t wake_up_tick;               /**< Used for alarm to keep track of wake up time */
-    struct int_list_elem_wrapper priority;                       /**< Priority. */
-    struct list_elem allelem;           /**< List element for all threads list. */
-    struct lock *wait_for;
+   /* Owned by thread.c. */
+   tid_t tid;                          /**< Thread identifier. */
+   enum thread_status status;          /**< Thread state. */
+   char name[16];                      /**< Name (for debugging purposes). */
+   uint8_t *stack;                     /**< Saved stack pointer. */
+   int64_t wake_up_tick;               /**< Used for alarm to keep track of wake up time */
+   struct list_elem allelem;           /**< List element for all threads list. */
+   struct int_list_elem_wrapper priority;                       /**< Priority. */
+   struct list priorities;             /**< Keep track of priority donations */
 
-    /* Shared between thread.c and synch.c. */
-    struct list_elem elem;              /**< List element. */
+   struct lock *wait_for;              /**< The lock this thread waiting for */
 
-    struct list priorities;      /**< Keep track of priority donations */
+   /* Shared between thread.c and synch.c. */
+   struct list_elem elem;              /**< List element. */
+
+   /* Used for mlfqs scheduler */
+   int nice;
+   fp_float cpu_time;
 
 #ifdef USERPROG
-    /* Owned by userprog/process.c. */
-    uint32_t *pagedir;                  /**< Page directory. */
+   /* Owned by userprog/process.c. */
+   uint32_t *pagedir;                  /**< Page directory. */
 #endif
 
-    /* Owned by thread.c. */
-    unsigned magic;                     /**< Detects stack overflow. */
+   /* Owned by thread.c. */
+   unsigned magic;                     /**< Detects stack overflow. */
   };
 
 /** If false (default), use round-robin scheduler.
@@ -147,6 +156,14 @@ int thread_get_load_avg (void);
 
 bool thread_elem_comp_priority(const struct list_elem *l_a, const struct list_elem *l_b, UNUSED void *aux);
 bool thread_elem_comp_alarm(const struct list_elem *l_a, const struct list_elem *l_b, UNUSED void *aux);
+
+/** Used for mlqfs scheduler */
+void thread_increment_cpu_by_one(void);
+void thread_update_load_avg(void);
+void thread_all_update_cpu(void);  
+void thread_all_update_priority(void);
+void thread_update_cpu (struct thread *t, void *aux);
+void thread_update_priority (struct thread *t, void *aux);
 
 #endif /**< threads/thread.h */
 
