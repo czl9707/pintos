@@ -109,6 +109,7 @@ struct thread
 #ifdef USERPROG
    /* Owned by userprog/process.c. */
    uint32_t *pagedir;                  /**< Page directory. */
+   struct process *process;            /**< The process thread runs in. */
 #endif
 
    /* Owned by thread.c. */
@@ -140,6 +141,7 @@ void thread_exit (void) NO_RETURN;
 void thread_yield (void);
 void thread_yield_if_necessary(void);
 
+struct thread *thread_get_by_tid(tid_t tid);
 
 /** Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func (struct thread *t, void *aux);

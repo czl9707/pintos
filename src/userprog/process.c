@@ -17,9 +17,14 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/malloc.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+static bool process_arg_passing(char**, char**, void**);
+
+struct process *process_get_by_tid(tid_t tid);
+void destroy_process(struct process *p);
 
 /** Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -28,7 +33,7 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 tid_t
 process_execute (const char *file_name) 
 {
-  char *fn_copy;
+  char *fn_copy, *actual_file_name, *save_ptr;
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
@@ -37,11 +42,30 @@ process_execute (const char *file_name)
   if (fn_copy == NULL)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
+  
+  actual_file_name = palloc_get_page(0);
+  if (actual_file_name == NULL)
+    return TID_ERROR;
+  
+  strlcpy (actual_file_name, file_name, PGSIZE);
+  actual_file_name = strtok_r(actual_file_name, " ", &save_ptr);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (actual_file_name, PRI_DEFAULT, start_process, fn_copy);
+  struct process *p = process_get_by_tid(tid);
+  sema_down(&p->loading);
+
+  palloc_free_page(actual_file_name);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+
+  enum intr_level old_level = intr_disable();
+  if (p->exit_status == -1) { 
+    destroy_process(p); 
+    tid = TID_ERROR;
+  } else p->self_destroy = true;
+  intr_set_level(old_level);
+
   return tid;
 }
 
@@ -50,7 +74,9 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
-  char *file_name = file_name_;
+  char *file_name, *save_ptr;
+  file_name = file_name_;
+  file_name = strtok_r(file_name, " ", &save_ptr);
   struct intr_frame if_;
   bool success;
 
@@ -60,12 +86,17 @@ start_process (void *file_name_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
+  if (success) success = process_arg_passing(&file_name, &save_ptr, &if_.esp);
+  if (! success) process_current()->exit_status = -1;
 
+  /* Finish loading anyway*/
+  sema_up(&process_current()->loading);
+  
   /* If load failed, quit. */
   palloc_free_page (file_name);
-  if (!success) 
+  if (!success) {
     thread_exit ();
-
+  }
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
@@ -74,6 +105,44 @@ start_process (void *file_name_)
      and jump to it. */
   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
   NOT_REACHED ();
+}
+
+/** Helper function to pass args into start process. */
+static bool process_arg_passing(char** file_name, char** save_ptr, void** stack){
+  uint32_t argc = 0;
+  size_t len;
+  void *argv[32];
+  char *token;
+
+  // Insert argv[] chars
+  for (token = *file_name ; token != NULL; token = strtok_r (NULL, " ", save_ptr)){
+    len = strlen(token) + 1;
+    *stack -= len;
+    strlcpy((char*)(*stack), token, len);
+    argv[argc] = *stack;
+    argc ++;
+    if (argc > 25) return false;
+  }
+  argv[argc] = NULL;
+
+  // word-align
+  len = (size_t)(*stack) % 4;
+  *stack -= len;
+  memset(*stack, 0, len);
+
+  // Insert argv[] ptr
+  for (int i = argc; i >= 0; i --){
+    *stack -= 4;
+    *(void**)(*stack) = argv[i];
+  }
+
+  //argv & argc & return addr
+  *(void**)(*stack - 4) = *stack;
+  *(uint32_t*)(*stack - 8) = argc;
+  *(void**)(*stack - 12) = NULL;
+  *stack -= 12;
+
+  return true;
 }
 
 /** Waits for thread TID to die and returns its exit status.  If
@@ -86,21 +155,28 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
-  return -1;
+  struct process *p = process_get_by_tid(child_tid);
+  if (p == NULL) return -1;
+  
+  sema_down(&p->waiting);
+  
+  return 0;
 }
 
 /** Free the current process's resources. */
 void
 process_exit (void)
 {
-  struct thread *cur = thread_current ();
+  struct thread *t = thread_current ();
+  struct process *p = t->process;
   uint32_t *pd;
 
+  printf("%s: exit(%d)\n", t->name, p->exit_status);
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
-  pd = cur->pagedir;
+  pd = t->pagedir;
   if (pd != NULL) 
     {
       /* Correct ordering here is crucial.  We must set
@@ -110,10 +186,14 @@ process_exit (void)
          directory before destroying the process's page
          directory, or our active page directory will be one
          that's been freed (and cleared). */
-      cur->pagedir = NULL;
+      t->pagedir = NULL;
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+
+  sema_up(&p->waiting);
+  if (p->self_destroy)
+    destroy_process(p);
 }
 
 /** Sets up the CPU for running user code in the current
@@ -131,6 +211,37 @@ process_activate (void)
      interrupts. */
   tss_update ();
 }
+
+struct process *process_get_by_tid(tid_t tid){
+  enum intr_level old_level = intr_disable();
+  struct thread *t = thread_get_by_tid(tid);
+  intr_set_level(old_level);
+
+  if (t == NULL) return NULL;
+  return t->process;
+}
+
+/** This function will only be called within thread_start*/
+struct process *process_create(struct thread *t){
+  struct process *p = malloc(sizeof(struct process));
+  memset(p, 0, sizeof(struct process));
+  sema_init(&p->waiting, 0);
+  sema_init(&p->loading, 0);
+  p->child_thread = t;
+  p->exit_status = 0;
+  p->self_destroy = false;
+
+  return p;
+}
+
+struct process *process_current(void){
+  return thread_current()->process;
+}
+
+void destroy_process(struct process *p){
+  free(p);
+}
+
 
 /** We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */

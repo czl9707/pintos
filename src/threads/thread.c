@@ -73,6 +73,10 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 
+#ifdef USERPROG
+static struct thread *parent_thread(struct thread *);
+#endif
+
 /** Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -182,9 +186,20 @@ thread_create (const char *name, int priority,
   if (t == NULL)
     return TID_ERROR;
 
+#ifdef USERPROG
+  struct process *p = process_create(t);
+  if (running_thread()->status == THREAD_RUNNING) 
+    p->parent = process_current();
+  else 
+    p->parent = NULL;
+#endif
+
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
+#ifdef USERPROG
+  t->process = p;
+#endif 
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -203,10 +218,7 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
-
-  if (thread_get_priority() < get_thread_priority(t)){
-    thread_yield();
-  } 
+  thread_yield_if_necessary();
 
   return tid;
 }
@@ -325,7 +337,8 @@ thread_yield (void)
 void thread_yield_if_necessary(void){
   if (list_empty(&ready_list)) return;
   if (get_thread_priority(list_entry(list_begin(&ready_list), struct thread, elem)) <= thread_get_priority()) return;
-
+  if (intr_context ()) return;
+  
   thread_yield();
 }
 
@@ -479,6 +492,16 @@ is_thread (struct thread *t)
   return t != NULL && t->magic == THREAD_MAGIC;
 }
 
+#ifdef USERPROG
+
+static struct thread *parent_thread(struct thread *t){
+  if (!is_thread(t)) return NULL;
+  if (t->process->parent == NULL) return NULL;
+  return t->process->parent->child_thread;
+}
+
+#endif
+
 /** Does basic initialization of T as a blocked thread named
    NAME. */
 static void
@@ -501,13 +524,20 @@ init_thread (struct thread *t, const char *name, int priority)
   t->wait_for = NULL;
 
   if (thread_mlfqs){
+#ifdef USERPROG
+    if (parent_thread(t) == NULL) t->nice = NICE_DEFAULT;
+    else t->nice = parent_thread(t)->nice;
+#else
     t->nice = NICE_DEFAULT;
+#endif
+    
     thread_update_priority(t, NULL);
     t->cpu_time = 0;
   }
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
+
   intr_set_level (old_level);
 }
 
@@ -687,6 +717,20 @@ void thread_update_priority (struct thread *t, UNUSED void *aux){
 
 void thread_all_update_priority(void){
   thread_foreach(thread_update_priority, NULL);
+}
+
+// need to be call within an external interruption
+struct thread *thread_get_by_tid(tid_t tid){
+  struct list_elem *elem;
+  struct thread *t;
+  struct list_elem *end = list_end(&all_list);
+  
+  for (elem = list_begin(&all_list); elem != end; elem = list_next(elem)){
+    t = list_entry(elem, struct thread, allelem);
+    if (t->tid == tid) return t;
+  }
+
+  return NULL;
 }
 
 
