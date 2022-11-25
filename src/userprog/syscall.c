@@ -27,7 +27,7 @@ static struct opened_file *get_opened_file_from_fd(fd_t);
 static void halt (void);
 static void exit (int);
 static pid_t exec (const char *);
-// static int wait (pid_t);
+static int wait (pid_t);
 static bool create (const char *, unsigned);
 // static bool remove (const char *);
 static fd_t open (const char *);
@@ -67,6 +67,8 @@ syscall_handler(struct intr_frame *f)
     f->eax = exec(*(const char**)args[0]);
     break;
   case SYS_WAIT:
+    parse_args(f, 1, &args);
+    f->eax = wait(*(pid_t*)args[0]);
     break;
   case SYS_CREATE:
     parse_args(f, 2, &args);
@@ -154,9 +156,9 @@ static pid_t exec (const char *cmd_line){
 }
 
 /* Waits for a child process pid and retrieves the child's exit status. */
-// static int wait (pid_t pid){
-//   printf("SYSCALL wait\n");
-// }
+static int wait (pid_t pid){
+  return process_wait(pid);
+}
 
 /* Creates a new file called file initially initial_size bytes 
   in size. Returns true if successful, false otherwise. */

@@ -26,7 +26,7 @@ static struct list ready_list;
 
 /** List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
-static struct list all_list;
+static struct list all_threads;
 
 /** Idle thread. */
 static struct thread *idle_thread;
@@ -97,7 +97,7 @@ thread_init (void)
 
   lock_init (&tid_lock);
   list_init (&ready_list);
-  list_init (&all_list);
+  list_init (&all_threads);
   load_avg = 0;
 
   /* Set up a thread structure for the running thread. */
@@ -105,6 +105,10 @@ thread_init (void)
   init_thread (initial_thread, "main", PRI_DEFAULT);
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid ();
+
+#ifdef USERPROG
+  process_init (initial_thread);
+#endif
 }
 
 /** Starts preemptive thread scheduling by enabling interrupts.
@@ -187,11 +191,10 @@ thread_create (const char *name, int priority,
     return TID_ERROR;
 
 #ifdef USERPROG
+  /* Update process relationships. */
   struct process *p = process_create(t);
-  if (running_thread()->status == THREAD_RUNNING) 
-    p->parent = process_current();
-  else 
-    p->parent = NULL;
+  p->parent = process_current();
+  if (p->parent != NULL) list_push_back(&p->parent->children, &p->elem);
 #endif
 
   /* Initialize thread. */
@@ -199,6 +202,7 @@ thread_create (const char *name, int priority,
   tid = t->tid = allocate_tid ();
 #ifdef USERPROG
   t->process = p;
+  t->process->pid = tid;
 #endif 
 
   /* Stack frame for kernel_thread(). */
@@ -352,7 +356,7 @@ thread_foreach (thread_action_func *func, void *aux)
 
   ASSERT (intr_get_level () == INTR_OFF);
 
-  for (e = list_begin (&all_list); e != list_end (&all_list);
+  for (e = list_begin (&all_threads); e != list_end (&all_threads);
        e = list_next (e))
     {
       struct thread *t = list_entry (e, struct thread, allelem);
@@ -497,7 +501,7 @@ is_thread (struct thread *t)
 static struct thread *parent_thread(struct thread *t){
   if (!is_thread(t)) return NULL;
   if (t->process->parent == NULL) return NULL;
-  return t->process->parent->child_thread;
+  return t->process->parent->thread;
 }
 
 #endif
@@ -536,7 +540,7 @@ init_thread (struct thread *t, const char *name, int priority)
   }
 
   old_level = intr_disable ();
-  list_push_back (&all_list, &t->allelem);
+  list_push_back (&all_threads, &t->allelem);
 
   intr_set_level (old_level);
 }
@@ -723,9 +727,9 @@ void thread_all_update_priority(void){
 struct thread *thread_get_by_tid(tid_t tid){
   struct list_elem *elem;
   struct thread *t;
-  struct list_elem *end = list_end(&all_list);
+  struct list_elem *end = list_end(&all_threads);
   
-  for (elem = list_begin(&all_list); elem != end; elem = list_next(elem)){
+  for (elem = list_begin(&all_threads); elem != end; elem = list_next(elem)){
     t = list_entry(elem, struct thread, allelem);
     if (t->tid == tid) return t;
   }

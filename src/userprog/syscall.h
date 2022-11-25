@@ -8,7 +8,7 @@ typedef int fd_t;
 
 struct opened_file {
     fd_t fd;                                /**< File Descriptor */
-    struct list_elem elem;               /**< List element */
+    struct list_elem elem;                  /**< List element */
     struct file *f;                         /**< File struct handler */
 };
 

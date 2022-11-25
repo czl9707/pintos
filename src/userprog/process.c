@@ -19,12 +19,32 @@
 #include "threads/vaddr.h"
 #include "threads/malloc.h"
 
+static struct list all_processes;
+static struct lock processes_access;
+struct process initial_process;
+
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 static bool process_arg_passing(char**, char**, void**);
 
-struct process *process_get_by_tid(tid_t tid);
-void destroy_process(struct process *p);
+static struct process *process_get_by_tid(tid_t tid);
+static void destroy_process(struct process *p);
+static bool process_is_parent(struct process *p, struct process *c);
+
+void process_init(struct thread *initial_thread){
+  list_init(&all_processes);
+  lock_init(&processes_access);
+
+  memset(&initial_process, 0, sizeof(struct process));
+  sema_init(&initial_process.waiting, 0);
+  sema_init(&initial_process.loading, 0);
+  list_init(&initial_process.children);
+  initial_process.thread = initial_thread;
+  initial_process.pid = initial_thread->tid;
+  initial_thread->process = &initial_process;
+
+  list_push_back(&all_processes, &initial_process.allelem);
+}
 
 /** Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -46,12 +66,12 @@ process_execute (const char *file_name)
   actual_file_name = palloc_get_page(0);
   if (actual_file_name == NULL)
     return TID_ERROR;
-  
   strlcpy (actual_file_name, file_name, PGSIZE);
   actual_file_name = strtok_r(actual_file_name, " ", &save_ptr);
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (actual_file_name, PRI_DEFAULT, start_process, fn_copy);
+
   struct process *p = process_get_by_tid(tid);
   sema_down(&p->loading);
 
@@ -60,10 +80,9 @@ process_execute (const char *file_name)
     palloc_free_page (fn_copy); 
 
   enum intr_level old_level = intr_disable();
-  if (p->exit_status == -1) { 
-    destroy_process(p); 
-    tid = TID_ERROR;
-  } else p->self_destroy = true;
+  if (p->exit_status == -1) tid = TID_ERROR;
+  p->self_destroy = true;
+  if (p->finish && (p->parent == NULL)) destroy_process(p); 
   intr_set_level(old_level);
 
   return tid;
@@ -157,12 +176,26 @@ static bool process_arg_passing(char** file_name, char** save_ptr, void** stack)
 int
 process_wait (tid_t child_tid) 
 {
+  int exit_status;
   struct process *p = process_get_by_tid(child_tid);
+  struct process *p_curr = process_current();
   if (p == NULL) return -1;
-  
+
+  enum intr_level old_level = intr_disable();
+  if (! process_is_parent(p_curr, p) || p->waited){
+    exit_status = -1;
+    goto exit;
+  } else if (p->finish){
+    exit_status = p->exit_status;
+    goto exit;
+  } 
   sema_down(&p->waiting);
-  
-  return 0;
+  exit_status = p->exit_status;
+
+  exit:
+  p->waited = true;
+  intr_set_level(old_level);
+  return exit_status;
 }
 
 /** Free the current process's resources. */
@@ -172,7 +205,6 @@ process_exit (void)
   struct thread *t = thread_current ();
   struct process *p = t->process;
   uint32_t *pd;
-
   printf("%s: exit(%d)\n", t->name, p->exit_status);
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -192,7 +224,9 @@ process_exit (void)
     }
 
   sema_up(&p->waiting);
-  if (p->self_destroy)
+
+  p->finish = true;
+  if (p->self_destroy & (p->parent == NULL))
     destroy_process(p);
 }
 
@@ -212,13 +246,22 @@ process_activate (void)
   tss_update ();
 }
 
-struct process *process_get_by_tid(tid_t tid){
-  enum intr_level old_level = intr_disable();
-  struct thread *t = thread_get_by_tid(tid);
-  intr_set_level(old_level);
+static struct process *process_get_by_tid(tid_t tid){
+  struct list_elem *elem;
+  struct process *p;
+  struct list_elem *end;
 
-  if (t == NULL) return NULL;
-  return t->process;
+  lock_acquire(&processes_access);
+  end = list_end(&all_processes);
+  for (elem = list_begin(&all_processes); elem != end; elem = list_next(elem)){
+    p = list_entry(elem, struct process, allelem);
+    if (p->pid == tid) break;
+  }
+
+  lock_release(&processes_access);
+
+  if (elem == end) return NULL;
+  return p;
 }
 
 /** This function will only be called within thread_start*/
@@ -227,19 +270,43 @@ struct process *process_create(struct thread *t){
   memset(p, 0, sizeof(struct process));
   sema_init(&p->waiting, 0);
   sema_init(&p->loading, 0);
-  p->child_thread = t;
+  list_init(&p->children);
+  p->thread = t;
   p->exit_status = 0;
   p->self_destroy = false;
+  p->finish = false;
+
+  lock_acquire(&processes_access);
+  list_push_back(&all_processes, &p->allelem);
+  lock_release(&processes_access);
 
   return p;
 }
 
-struct process *process_current(void){
-  return thread_current()->process;
+static void destroy_process(struct process *p){
+  const struct list_elem *end = list_end(&p->children);
+  struct list_elem *next, *curr = list_begin(&p->children);
+  struct process *curr_p;
+  while (curr != end){
+    next = list_next(curr);
+    curr_p = list_entry(curr, struct process, elem);
+
+    curr_p->parent = NULL;
+    if (curr_p->finish && curr_p->self_destroy) destroy_process(curr_p);
+
+    curr = next;
+  }
+
+  list_remove(&p->allelem);
+  free(p);
 }
 
-void destroy_process(struct process *p){
-  free(p);
+static bool process_is_parent(struct process *p, struct process *c){
+  return p == c->parent;
+}
+
+struct process *process_current(void){
+  return thread_current()->process;
 }
 
 
