@@ -29,14 +29,14 @@ static void exit (int);
 static pid_t exec (const char *);
 static int wait (pid_t);
 static bool create (const char *, unsigned);
-// static bool remove (const char *);
+static bool remove (const char *);
 static fd_t open (const char *);
 static int filesize (fd_t);
 static int read (fd_t , void *, unsigned);
 static int write (fd_t, const void *, unsigned);
-// static void seek (fd_t , unsigned);
-// static unsigned tell (fd_t);
-// static void close (fd_t);
+static void seek (fd_t , unsigned);
+static unsigned tell (fd_t);
+static void close (fd_t);
 
 void syscall_init(void)
 {
@@ -75,6 +75,8 @@ syscall_handler(struct intr_frame *f)
     f->eax = create(*(const char**)args[0], *(unsigned*)args[1]);
     break;
   case SYS_REMOVE:
+    parse_args(f, 1, &args);
+    f->eax = remove(*(const char**)args[0]);
     break;
   case SYS_OPEN:
     parse_args(f, 1, &args);
@@ -93,10 +95,16 @@ syscall_handler(struct intr_frame *f)
     f->eax = write(*(fd_t*)args[0], *(void**)args[1], *(unsigned*)args[2]);
     break;
   case SYS_SEEK:
+    parse_args(f, 2, &args);
+    seek(*(fd_t*)args[0], *(unsigned*)args[1]);
     break;
   case SYS_TELL:
+    parse_args(f, 1, &args);
+    f->eax = tell(*(fd_t*)args[0]);
     break;
   case SYS_CLOSE:
+    parse_args(f, 1, &args);
+    close(*(fd_t*)args[0]);
     break;
   case SYS_MMAP:
     break;
@@ -169,9 +177,11 @@ static bool create (const char *file, unsigned initial_size){
   return filesys_create(file, initial_size);
 }
 
-// static bool remove (const char *file){
-//   printf("SYSCALL remove\n");
-// }
+static bool remove (const char *file){
+  // printf("SYSCALL remove\n");
+  addr_is_valid(file);
+  return filesys_remove(file);
+}
 
 /* Opens the file called file. 
   Returns a nonnegative integer handle 
@@ -190,8 +200,8 @@ static fd_t open (const char *file){
   struct opened_file *of = malloc (sizeof (struct opened_file));
   of->f = f;
   of->fd = fd;
+  of->p = process_current();
   list_insert_ordered(&opened_files, &of->elem, opened_file_elem_comp, NULL);
-
   lock_release(&file_list_access_lock);
 
   return of->fd;
@@ -200,7 +210,7 @@ static fd_t open (const char *file){
 /* Returns the size, in bytes, of the file open as fd. */
 static int filesize (fd_t fd){
   struct opened_file *op = get_opened_file_from_fd(fd);
-  if (op == NULL) return -1;
+  if (op == NULL || op->f == NULL) return -1;
 
   return file_length(op->f);
 }
@@ -210,6 +220,7 @@ static int filesize (fd_t fd){
   or -1 if the file could not be read 
   (due to a condition other than end of file).  */
 static int read (fd_t fd, void *buffer, unsigned size){
+  // printf("SYSCALL read %d\n", fd);
   mem_is_valid(buffer, size);
   if (fd == 0){
     unsigned read_size = 0;
@@ -224,7 +235,7 @@ static int read (fd_t fd, void *buffer, unsigned size){
   }
 
   struct opened_file *op = get_opened_file_from_fd(fd);
-  if (op == NULL) return -1;
+  if (op == NULL || op->f == NULL) return -1;
 
   return file_read(op->f, buffer, size);
 }
@@ -233,29 +244,45 @@ static int read (fd_t fd, void *buffer, unsigned size){
   Returns the number of bytes actually written, 
   which may be less than size if some bytes could not be written. */
 static int write (fd_t fd, const void *buffer, unsigned size){
+  // printf("SYSCALL write %d\n", fd);
   mem_is_valid(buffer, size);
   if (fd == 1){
     putbuf(buffer, size);
   }
 
   struct opened_file *op = get_opened_file_from_fd(fd);
-  if (op == NULL) return -1;
+  if (op == NULL || op->f == NULL) return -1;
 
   return file_write(op->f, buffer, size);
-
 }
 
-// static void seek (fd_t fd, unsigned position){
-//   printf("SYSCALL seek\n");
-// }
+static void seek (fd_t fd, unsigned position){
+  // printf("SYSCALL seek\n");
+  struct opened_file *op = get_opened_file_from_fd(fd);
+  if (op == NULL || op->f == NULL) return;
 
-// static unsigned tell (fd_t fd){
-//   printf("SYSCALL tell\n");
-// }
+  op->f->pos = position;
+}
 
-// static void close (fd_t fd){
-//   printf("SYSCALL close\n");
-// }
+static unsigned tell (fd_t fd){
+  // printf("SYSCALL tell\n");
+  struct opened_file *op = get_opened_file_from_fd(fd);
+  if (op == NULL || op->f == NULL) return 0;
+  return op->f->pos;
+}
+
+static void close (fd_t fd){
+  // printf("SYSCALL close\n");
+  struct opened_file *op = get_opened_file_from_fd(fd);
+  if (op == NULL || op->f == NULL) return;
+  if (process_current() != op->p) return;
+
+  lock_acquire(&file_list_access_lock);
+  list_remove(&op->elem);
+  file_close(op->f);
+  free(op);
+  lock_release(&file_list_access_lock);
+}
 
 // *************************** Static helper function ***************************
 

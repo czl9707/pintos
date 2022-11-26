@@ -106,10 +106,16 @@ start_process (void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
   if (success) success = process_arg_passing(&file_name, &save_ptr, &if_.esp);
-  if (! success) process_current()->exit_status = -1;
+  struct process *p = process_current();
+
+  if (success) {
+    p->executable = filesys_open(file_name);
+    file_deny_write(p->executable);
+  }
+  if (! success) p->exit_status = -1;
 
   /* Finish loading anyway*/
-  sema_up(&process_current()->loading);
+  sema_up(&p->loading);
   
   /* If load failed, quit. */
   palloc_free_page (file_name);
@@ -224,7 +230,7 @@ process_exit (void)
     }
 
   sema_up(&p->waiting);
-
+  file_close(p->executable);
   p->finish = true;
   if (p->self_destroy & (p->parent == NULL))
     destroy_process(p);
