@@ -304,7 +304,9 @@ void
 thread_exit (void) 
 {
   ASSERT (!intr_context ());
+  struct thread *t = thread_current();
 
+  intr_disable ();
 #ifdef USERPROG
   process_exit ();
 #endif
@@ -312,9 +314,8 @@ thread_exit (void)
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
-  intr_disable ();
-  list_remove (&thread_current()->allelem);
-  thread_current ()->status = THREAD_DYING;
+  list_remove (&t->allelem);
+  t->status = THREAD_DYING;
   schedule ();
   NOT_REACHED ();
 }

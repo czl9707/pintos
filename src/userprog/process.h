@@ -13,7 +13,7 @@ struct process {
     struct file *executable;            /**< The executable this process using */
     struct semaphore waiting;           /**< When process exit will call sema_up. When other process waiting on this process, call sema_down on this. */
     struct semaphore loading;           /**< Control the loading phase of this process. */
-    bool self_destroy;                  /**< Destroy itself when called process_exit on it. */
+    bool started;                       /**< This process is successfully started */
     bool finish;                        /**< This process is finished. */
     bool waited;                        /**< This process is waited by its parent thread */
 

@@ -8,6 +8,7 @@
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "userprog/syscall.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -64,8 +65,10 @@ process_execute (const char *file_name)
   strlcpy (fn_copy, file_name, PGSIZE);
   
   actual_file_name = palloc_get_page(0);
-  if (actual_file_name == NULL)
+  if (actual_file_name == NULL){
+    palloc_free_page (fn_copy); 
     return TID_ERROR;
+  }
   strlcpy (actual_file_name, file_name, PGSIZE);
   actual_file_name = strtok_r(actual_file_name, " ", &save_ptr);
 
@@ -79,11 +82,10 @@ process_execute (const char *file_name)
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
 
-  enum intr_level old_level = intr_disable();
-  if (p->exit_status == -1) tid = TID_ERROR;
-  p->self_destroy = true;
-  if (p->finish && (p->parent == NULL)) destroy_process(p); 
-  intr_set_level(old_level);
+  lock_acquire(&processes_access);
+  if (p->finish && !p->started) tid = TID_ERROR;
+  if ((p->parent == NULL) && (p->finish || p->exit_status == -1)) destroy_process(p); 
+  lock_release(&processes_access);
 
   return tid;
 }
@@ -106,13 +108,17 @@ start_process (void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
   if (success) success = process_arg_passing(&file_name, &save_ptr, &if_.esp);
+  
   struct process *p = process_current();
-
   if (success) {
+    p->started = true;
     p->executable = filesys_open(file_name);
     file_deny_write(p->executable);
   }
-  if (! success) p->exit_status = -1;
+  else if (! success) {
+    p->exit_status = -1;
+    p->finish = true;
+  }
 
   /* Finish loading anyway*/
   sema_up(&p->loading);
@@ -210,30 +216,33 @@ process_exit (void)
 {
   struct thread *t = thread_current ();
   struct process *p = t->process;
-  uint32_t *pd;
+  uint32_t *pd = t->pagedir;
   printf("%s: exit(%d)\n", t->name, p->exit_status);
-  /* Destroy the current process's page directory and switch back
-     to the kernel-only page directory. */
-  pd = t->pagedir;
-  if (pd != NULL) 
-    {
-      /* Correct ordering here is crucial.  We must set
-         cur->pagedir to NULL before switching page directories,
-         so that a timer interrupt can't switch back to the
-         process page directory.  We must activate the base page
-         directory before destroying the process's page
-         directory, or our active page directory will be one
-         that's been freed (and cleared). */
-      t->pagedir = NULL;
-      pagedir_activate (NULL);
-      pagedir_destroy (pd);
-    }
 
+  lock_acquire(&processes_access);
   sema_up(&p->waiting);
   file_close(p->executable);
   p->finish = true;
-  if (p->self_destroy & (p->parent == NULL))
+  if (p->parent == NULL)
     destroy_process(p);
+  lock_release(&processes_access);
+  
+  /* Destroy the current process's page directory and switch back
+    to the kernel-only page directory. */
+  if (pd != NULL) 
+  {
+    /* Correct ordering here is crucial.  We must set
+        cur->pagedir to NULL before switching page directories,
+        so that a timer interrupt can't switch back to the
+        process page directory.  We must activate the base page
+        directory before destroying the process's page
+        directory, or our active page directory will be one
+        that's been freed (and cleared). */
+    t->pagedir = NULL;
+    pagedir_activate (NULL);
+    pagedir_destroy (pd);
+  }
+  
 }
 
 /** Sets up the CPU for running user code in the current
@@ -278,9 +287,6 @@ struct process *process_create(struct thread *t){
   sema_init(&p->loading, 0);
   list_init(&p->children);
   p->thread = t;
-  p->exit_status = 0;
-  p->self_destroy = false;
-  p->finish = false;
 
   lock_acquire(&processes_access);
   list_push_back(&all_processes, &p->allelem);
@@ -296,14 +302,14 @@ static void destroy_process(struct process *p){
   while (curr != end){
     next = list_next(curr);
     curr_p = list_entry(curr, struct process, elem);
+    curr = next;
 
     curr_p->parent = NULL;
-    if (curr_p->finish && curr_p->self_destroy) destroy_process(curr_p);
-
-    curr = next;
+    if (curr_p->finish || curr_p->exit_status == -1) destroy_process(curr_p);
   }
 
   list_remove(&p->allelem);
+  clean_opened_file_by_pid(p->pid);
   free(p);
 }
 
