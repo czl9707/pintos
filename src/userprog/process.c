@@ -29,7 +29,7 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 static bool process_arg_passing(char**, char**, void**);
 
 static struct process *process_get_by_tid(tid_t tid);
-static void destroy_process(struct process *p);
+static void process_clean_up(struct process *p);
 static bool process_is_parent(struct process *p, struct process *c);
 
 void process_init(struct thread *initial_thread){
@@ -60,13 +60,13 @@ process_execute (const char *file_name)
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
-    return TID_ERROR;
+  if (fn_copy == NULL) return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
   
   actual_file_name = palloc_get_page(0);
   if (actual_file_name == NULL){
     palloc_free_page (fn_copy); 
+
     return TID_ERROR;
   }
   strlcpy (actual_file_name, file_name, PGSIZE);
@@ -74,19 +74,16 @@ process_execute (const char *file_name)
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (actual_file_name, PRI_DEFAULT, start_process, fn_copy);
-
+  
+  enum intr_level old_level = intr_disable();
   struct process *p = process_get_by_tid(tid);
-  sema_down(&p->loading);
+  if (p != NULL) sema_down(&p->loading);
+  intr_set_level(old_level);
 
-  palloc_free_page(actual_file_name);
-  if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+  palloc_free_page (actual_file_name);
+  palloc_free_page (fn_copy); 
 
-  lock_acquire(&processes_access);
-  if (p->finish && !p->started) tid = TID_ERROR;
-  if ((p->parent == NULL) && (p->finish || p->exit_status == -1)) destroy_process(p); 
-  lock_release(&processes_access);
-
+  if (p!= NULL && p->finish && !p->started) tid = TID_ERROR;
   return tid;
 }
 
@@ -108,7 +105,7 @@ start_process (void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
   if (success) success = process_arg_passing(&file_name, &save_ptr, &if_.esp);
-  
+
   struct process *p = process_current();
   if (success) {
     p->started = true;
@@ -124,7 +121,6 @@ start_process (void *file_name_)
   sema_up(&p->loading);
   
   /* If load failed, quit. */
-  palloc_free_page (file_name);
   if (!success) {
     thread_exit ();
   }
@@ -188,26 +184,21 @@ static bool process_arg_passing(char** file_name, char** save_ptr, void** stack)
 int
 process_wait (tid_t child_tid) 
 {
-  int exit_status;
-  struct process *p = process_get_by_tid(child_tid);
   struct process *p_curr = process_current();
-  if (p == NULL) return -1;
+  int result = 0;
 
   enum intr_level old_level = intr_disable();
-  if (! process_is_parent(p_curr, p) || p->waited){
-    exit_status = -1;
-    goto exit;
-  } else if (p->finish){
-    exit_status = p->exit_status;
-    goto exit;
-  } 
-  sema_down(&p->waiting);
-  exit_status = p->exit_status;
+  struct process *p = process_get_by_tid(child_tid);
+  if (p == NULL || ! process_is_parent(p_curr, p)) result = -1;
+  
+  if (result != -1){
+    sema_down(&p->waiting);
+    result = p->exit_status;
+    process_clean_up(p);
+  }
 
-  exit:
-  p->waited = true;
   intr_set_level(old_level);
-  return exit_status;
+  return result;
 }
 
 /** Free the current process's resources. */
@@ -218,14 +209,11 @@ process_exit (void)
   struct process *p = t->process;
   uint32_t *pd = t->pagedir;
   printf("%s: exit(%d)\n", t->name, p->exit_status);
-
-  lock_acquire(&processes_access);
+  
+  enum intr_level old_level = intr_disable();
   sema_up(&p->waiting);
-  file_close(p->executable);
-  p->finish = true;
-  if (p->parent == NULL)
-    destroy_process(p);
-  lock_release(&processes_access);
+  if (p->waited) process_clean_up(p);
+  intr_set_level(old_level);
   
   /* Destroy the current process's page directory and switch back
     to the kernel-only page directory. */
@@ -295,20 +283,21 @@ struct process *process_create(struct thread *t){
   return p;
 }
 
-static void destroy_process(struct process *p){
+static void process_clean_up(struct process *p){
   const struct list_elem *end = list_end(&p->children);
-  struct list_elem *next, *curr = list_begin(&p->children);
+  struct list_elem *curr = list_begin(&p->children);
   struct process *curr_p;
   while (curr != end){
-    next = list_next(curr);
     curr_p = list_entry(curr, struct process, elem);
-    curr = next;
+    curr = list_next(curr);
 
-    curr_p->parent = NULL;
-    if (curr_p->finish || curr_p->exit_status == -1) destroy_process(curr_p);
+    if (curr_p->finish || curr_p->exit_status == -1) 
+      process_clean_up(curr_p);
   }
 
+  if (p->executable != NULL) file_close(p->executable);
   list_remove(&p->allelem);
+  list_remove(&p->elem);
   clean_opened_file_by_pid(p->pid);
   free(p);
 }

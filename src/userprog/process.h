@@ -15,7 +15,7 @@ struct process {
     struct semaphore loading;           /**< Control the loading phase of this process. */
     bool started;                       /**< This process is successfully started */
     bool finish;                        /**< This process is finished. */
-    bool waited;                        /**< This process is waited by its parent thread */
+    bool waited;                        /**< This process has been waited. */
 
     struct list_elem allelem;
     struct list_elem elem;              /**< Used for parents children list */
