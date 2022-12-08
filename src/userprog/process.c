@@ -109,10 +109,7 @@ start_process (void *file_name_)
   struct process *p = process_current();
   if (success) {
     p->started = true;
-    p->executable = filesys_open(file_name);
-    file_deny_write(p->executable);
-  }
-  else if (! success) {
+  } else if (! success) {
     p->exit_status = -1;
     p->finish = true;
   }
@@ -491,7 +488,9 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  
+  process_current()->executable = file;
+  if (file != NULL) file_deny_write(file);
   return success;
 }
 
