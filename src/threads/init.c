@@ -28,6 +28,7 @@
 #include "userprog/gdt.h"
 #include "userprog/syscall.h"
 #include "userprog/tss.h"
+#include "userprog/userfile.h"
 #else
 #include "tests/threads/tests.h"
 #endif
@@ -36,6 +37,9 @@
 #include "devices/ide.h"
 #include "filesys/filesys.h"
 #include "filesys/fsutil.h"
+#endif
+#ifdef VM
+#include "vm/frame.h"
 #endif
 
 /** Page directory with kernel mappings only. */
@@ -116,6 +120,7 @@ pintos_init (void)
 #ifdef USERPROG
   exception_init ();
   syscall_init ();
+  userfile_init();
 #endif
 
   /* Start thread scheduler and enable interrupts. */
@@ -130,6 +135,10 @@ pintos_init (void)
   filesys_init (format_filesys);
 #endif
 
+#ifdef VM
+  frame_init();
+#endif
+  
   printf ("Boot complete.\n");
   
   if (*argv != NULL) {

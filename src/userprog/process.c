@@ -40,6 +40,9 @@ void process_init(struct thread *initial_thread){
   sema_init(&initial_process.waiting, 0);
   sema_init(&initial_process.loading, 0);
   list_init(&initial_process.children);
+#ifdef VM
+  hash_init(&initial_process.page_table, pte_hash_hash_func, pte_hash_less_func, NULL);
+#endif
   initial_process.thread = initial_thread;
   initial_process.pid = initial_thread->tid;
   initial_thread->process = &initial_process;
@@ -271,6 +274,9 @@ struct process *process_create(struct thread *t){
   sema_init(&p->waiting, 0);
   sema_init(&p->loading, 0);
   list_init(&p->children);
+#ifdef VM
+  hash_init(&p->page_table, pte_hash_hash_func, pte_hash_less_func, NULL);
+#endif
   p->thread = t;
 
   lock_acquire(&processes_access);
@@ -296,6 +302,11 @@ static void process_clean_up(struct process *p){
   list_remove(&p->allelem);
   list_remove(&p->elem);
   clean_opened_file_by_pid(p->pid);
+
+#ifdef VM
+  hash_destroy(&curr_p->page_table, pte_hash_free_func);
+#endif
+
   free(p);
 }
 
