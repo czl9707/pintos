@@ -1,4 +1,5 @@
 #include "userprog/userfile.h"
+#include <stdio.h>
 #include "filesys/filesys.h"
 
 static struct list opened_files;

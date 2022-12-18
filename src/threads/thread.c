@@ -107,7 +107,7 @@ thread_init (void)
   initial_thread->tid = allocate_tid ();
 
 #ifdef USERPROG
-  process_init (initial_thread);
+  initial_process_attach (initial_thread);
 #endif
 }
 

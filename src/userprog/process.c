@@ -9,6 +9,7 @@
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
 #include "userprog/syscall.h"
+#include "userprog/userfile.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -32,22 +33,24 @@ static struct process *process_get_by_tid(tid_t tid);
 static void process_clean_up(struct process *p);
 static bool process_is_parent(struct process *p, struct process *c);
 
-void process_init(struct thread *initial_thread){
+void process_init(void){
   list_init(&all_processes);
   lock_init(&processes_access);
 
-  memset(&initial_process, 0, sizeof(struct process));
   sema_init(&initial_process.waiting, 0);
   sema_init(&initial_process.loading, 0);
-  list_init(&initial_process.children);
-#ifdef VM
+  list_init(&initial_process.children);  
   hash_init(&initial_process.page_table, pte_hash_hash_func, pte_hash_less_func, NULL);
-#endif
-  initial_process.thread = initial_thread;
-  initial_process.pid = initial_thread->tid;
-  initial_thread->process = &initial_process;
+  initial_process.pid = initial_process.thread->tid;
+  initial_process.thread->process = &initial_process;
 
   list_push_back(&all_processes, &initial_process.allelem);
+}
+
+// should only pass initial_thread into this function.
+void initial_process_attach(struct thread *initial_thread){
+  memset(&initial_process, 0, sizeof(struct process));
+  initial_process.thread = initial_thread;
 }
 
 /** Starts a new thread running a user program loaded from
@@ -190,7 +193,7 @@ process_wait (tid_t child_tid)
   enum intr_level old_level = intr_disable();
   struct process *p = process_get_by_tid(child_tid);
   if (p == NULL || ! process_is_parent(p_curr, p)) result = -1;
-  
+
   if (result != -1){
     sema_down(&p->waiting);
     result = p->exit_status;
@@ -226,11 +229,12 @@ process_exit (void)
         directory before destroying the process's page
         directory, or our active page directory will be one
         that's been freed (and cleared). */
+
+    page_table_destroy(p);
     t->pagedir = NULL;
     pagedir_activate (NULL);
     pagedir_destroy (pd);
   }
-  
 }
 
 /** Sets up the CPU for running user code in the current
@@ -274,9 +278,7 @@ struct process *process_create(struct thread *t){
   sema_init(&p->waiting, 0);
   sema_init(&p->loading, 0);
   list_init(&p->children);
-#ifdef VM
   hash_init(&p->page_table, pte_hash_hash_func, pte_hash_less_func, NULL);
-#endif
   p->thread = t;
 
   lock_acquire(&processes_access);
@@ -302,10 +304,6 @@ static void process_clean_up(struct process *p){
   list_remove(&p->allelem);
   list_remove(&p->elem);
   clean_opened_file_by_pid(p->pid);
-
-#ifdef VM
-  hash_destroy(&curr_p->page_table, pte_hash_free_func);
-#endif
 
   free(p);
 }
@@ -505,9 +503,6 @@ load (const char *file_name, void (**eip) (void), void **esp)
   return success;
 }
 
-/** load() helpers. */
-
-static bool install_page (void *upage, void *kpage, bool writable);
 
 /** Checks whether PHDR describes a valid, loadable segment in
    FILE and returns true if so, false otherwise. */
@@ -585,27 +580,11 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-      /* Get a page of memory. */
-      uint8_t *kpage = palloc_get_page (PAL_USER);
-      if (kpage == NULL)
-        return false;
-
-      /* Load this page. */
-      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
-        {
-          palloc_free_page (kpage);
-          return false; 
-        }
-      memset (kpage + page_read_bytes, 0, page_zero_bytes);
-
-      /* Add the page to the process's address space. */
-      if (!install_page (upage, kpage, writable)) 
-        {
-          palloc_free_page (kpage);
-          return false; 
-        }
+      pte_add(PAGE_FILE, process_current(), file, upage, 
+              writable, ofs, page_read_bytes);
 
       /* Advance. */
+      ofs += page_read_bytes;
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;
@@ -618,37 +597,6 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (void **esp) 
 {
-  uint8_t *kpage;
-  bool success = false;
-
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  if (kpage != NULL) 
-    {
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success)
-        *esp = PHYS_BASE;
-      else
-        palloc_free_page (kpage);
-    }
-  return success;
-}
-
-/** Adds a mapping from user virtual address UPAGE to kernel
-   virtual address KPAGE to the page table.
-   If WRITABLE is true, the user process may modify the page;
-   otherwise, it is read-only.
-   UPAGE must not already be mapped.
-   KPAGE should probably be a page obtained from the user pool
-   with palloc_get_page().
-   Returns true on success, false if UPAGE is already mapped or
-   if memory allocation fails. */
-static bool
-install_page (void *upage, void *kpage, bool writable)
-{
-  struct thread *t = thread_current ();
-
-  /* Verify that there's not already a page at that virtual
-     address, then map our page there. */
-  return (pagedir_get_page (t->pagedir, upage) == NULL
-          && pagedir_set_page (t->pagedir, upage, kpage, writable));
+  *esp = PHYS_BASE;
+  return load_stack(process_current(), PHYS_BASE, PHYS_BASE - PGSIZE);
 }

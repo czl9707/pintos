@@ -5,9 +5,7 @@
 #include "hash.h"
 #include "threads/thread.h"
 #include "threads/synch.h"
-#ifdef VM
 #include "vm/page.h"
-#endif
 
 typedef int pid_t;
 
@@ -29,7 +27,8 @@ struct process {
     struct hash page_table;             /**< Store memory mapping */
 };
 
-void process_init(struct thread *t);
+void process_init(void);
+void initial_process_attach(struct thread *t);
 struct process *process_create(struct thread *t);
 pid_t process_execute (const char *file_name);
 int process_wait (pid_t);

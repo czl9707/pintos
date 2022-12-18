@@ -65,6 +65,7 @@ userprog_SRC += userprog/userfile.c # Userfile operation.
 # Virtual memory code.
 vm_SRC  = vm/frame.c				# Frame table operation.
 vm_SRC += vm/page.c					# page table operation.
+vm_SRC += vm/swap.c					# swap in/out operation.
 
 # Filesystem code.
 filesys_SRC  = filesys/filesys.c	# Filesystem core.

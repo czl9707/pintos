@@ -5,25 +5,18 @@
 #include "devices/shutdown.h"
 #include "devices/input.h"
 #include "filesys/file.h"
-#include "filesys/filesys.h"
 #include "threads/interrupt.h"
 #include "threads/malloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/process.h"
 #include "userprog/pagedir.h"
-
-static struct list opened_files;
-static struct lock file_list_access_lock;
-static struct lock file_op_lock;
+#include "userprog/userfile.h"
 
 static void syscall_handler(struct intr_frame *);
 static void parse_args(struct intr_frame *, int, void *(*)[]);
 static void mem_is_valid(const void*, size_t);
 static void addr_is_valid(const void*);
-static bool opened_file_elem_comp(const struct list_elem *, const struct list_elem *, UNUSED void *);
-static fd_t next_valid_fd(void);
-static struct opened_file *get_opened_file_from_fd(fd_t);
 
 static void halt (void);
 static void exit (int);
@@ -42,9 +35,6 @@ static void close (fd_t);
 void syscall_init(void)
 {
   intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
-  list_init(&opened_files);
-  lock_init(&file_list_access_lock);
-  lock_init(&file_op_lock);
 }
 
 static void
@@ -175,20 +165,13 @@ static int wait (pid_t pid){
 static bool create (const char *file, unsigned initial_size){
   addr_is_valid(file);
   if (file == NULL) exit(-1);
-
-  lock_acquire(&file_op_lock);
-  bool result = filesys_create(file, initial_size);
-  lock_release(&file_op_lock);
-  return result;
+  return userfile_create(file, initial_size);
 }
 
 static bool remove (const char *file){
   addr_is_valid(file);
-
-  lock_acquire(&file_op_lock);
-  bool result = filesys_remove(file);
-  lock_release(&file_op_lock);
-  return result;
+  if (file == NULL) exit(-1);
+  return userfile_remove(file);
 }
 
 /* Opens the file called file. 
@@ -198,34 +181,12 @@ static bool remove (const char *file){
 static fd_t open (const char *file){
   addr_is_valid(file);
   if (file == NULL) exit(-1);
-
-  lock_acquire(&file_op_lock);
-  struct file *f = filesys_open(file);
-  lock_release(&file_op_lock);
-  if (f == NULL) return -1;
-
-  fd_t fd = next_valid_fd();
-  struct opened_file *of = malloc (sizeof (struct opened_file));
-  of->f = f;
-  of->fd = fd;
-  of->pid = process_current()->pid;
-
-  lock_acquire(&file_list_access_lock);
-  list_insert_ordered(&opened_files, &of->elem, opened_file_elem_comp, NULL);
-  lock_release(&file_list_access_lock);
-
-  return of->fd;
+  return userfile_open(file);
 }
 
 /* Returns the size, in bytes, of the file open as fd. */
 static int filesize (fd_t fd){
-  struct opened_file *of = get_opened_file_from_fd(fd);
-  if (of == NULL || of->f == NULL) return -1;
-  
-  lock_acquire(&file_op_lock);
-  int result = file_length(of->f);
-  lock_release(&file_op_lock);
-  return result;
+  return userfile_filesize(fd);
 }
 
 /* Reads size bytes from the file open as fd into buffer. 
@@ -246,13 +207,7 @@ static int read (fd_t fd, void *buffer, unsigned size){
     return read_size;
   }
 
-  struct opened_file *of = get_opened_file_from_fd(fd);
-  if (of == NULL || of->f == NULL) return -1;
-
-  lock_acquire(&file_op_lock);
-  int result = file_read(of->f, buffer, size);
-  lock_release(&file_op_lock);
-  return result;
+  return userfile_read(fd, buffer, size);
 }
 
 /* Writes size bytes from buffer to the open file fd. 
@@ -264,42 +219,19 @@ static int write (fd_t fd, const void *buffer, unsigned size){
     putbuf(buffer, size);
   }
 
-  struct opened_file *of = get_opened_file_from_fd(fd);
-  if (of == NULL || of->f == NULL) return -1;
-
-  lock_acquire(&file_op_lock);
-  int result = file_write(of->f, buffer, size);
-  lock_release(&file_op_lock);
-  return result;
+  return userfile_write(fd, buffer, size);
 }
 
 static void seek (fd_t fd, unsigned position){
-  struct opened_file *of = get_opened_file_from_fd(fd);
-  if (of == NULL || of->f == NULL) return;
-
-  of->f->pos = position;
+  userfile_seek(fd, position);
 }
 
 static unsigned tell (fd_t fd){
-  struct opened_file *of = get_opened_file_from_fd(fd);
-  if (of == NULL || of->f == NULL) return 0;
-  return of->f->pos;
+  return userfile_tell(fd);
 }
 
 static void close (fd_t fd){
-  struct opened_file *of = get_opened_file_from_fd(fd);
-  if (of == NULL || of->f == NULL) return;
-  if (process_current()->pid != of->pid) return;
-
-  lock_acquire(&file_list_access_lock);
-  list_remove(&of->elem);
-  lock_release(&file_list_access_lock);
-
-  lock_acquire(&file_op_lock);
-  file_close(of->f);
-  lock_release(&file_op_lock);
-
-  free(of);
+  userfile_close(fd);
 }
 
 // *************************** Static helper function ***************************
@@ -314,68 +246,11 @@ static void mem_is_valid(const void* addr, size_t size){
 }
 
 static void addr_is_valid(const void* addr){
-  if (is_user_vaddr(addr) && pagedir_get_page(pagedir_current(), addr) != NULL){
+  if (is_user_vaddr(addr) && 
+    (pagedir_get_page(pagedir_current(), addr) != NULL || 
+    load_page(process_current(), (void*)addr))){
     return;
   }
   exit(-1);
   NOT_REACHED();
-}
-
-/** This function should always be called within an external interruption */
-static fd_t next_valid_fd(void){
-  fd_t fd = 2, fd_iter;
-
-  lock_acquire(&file_list_access_lock);
-
-  struct list_elem *elem = list_begin(&opened_files);
-  struct list_elem *end_elem = list_end(&opened_files);
-  for (; elem != end_elem; elem = list_next(elem)){
-    fd_iter = list_entry(elem, struct opened_file, elem)->fd;
-    if (fd == fd_iter) fd ++;
-    else break;
-  }
-  
-  lock_release(&file_list_access_lock);
-  return fd;
-}
-
-static struct opened_file *get_opened_file_from_fd(fd_t fd){
-  lock_acquire(&file_list_access_lock);
-  struct list_elem *elem = list_begin(&opened_files), *elem_end = list_end(&opened_files);
-  struct opened_file *of, *result = NULL;
-
-  for (;elem != elem_end; elem = list_next(elem)){
-    of = list_entry(elem, struct opened_file, elem);
-    if (of->fd == fd) result = of;
-    else if (of->fd > fd) break; 
-  }
-  lock_release(&file_list_access_lock);
-  return result;
-}
-
-static bool opened_file_elem_comp(const struct list_elem *l_a, const struct list_elem *l_b, UNUSED void *aux){
-  struct opened_file *of_a = list_entry(l_a, struct opened_file, elem);
-  struct opened_file *of_b = list_entry(l_b, struct opened_file, elem);
-  return of_a->fd < of_b->fd;
-}
-
-void clean_opened_file_by_pid(pid_t pid){
-  lock_acquire(&file_list_access_lock);
-  struct list_elem *curr = list_begin(&opened_files), 
-                  *end = list_end(&opened_files), 
-                  *next;
-  struct opened_file *of;
-
-  while (curr != end){
-    next = list_next(curr);
-    of = list_entry(curr, struct opened_file, elem);
-    if (of->pid == pid){
-      list_remove(curr);
-      file_close(of->f);
-      free(of);
-    }
-    curr = next;
-  }
-
-  lock_release(&file_list_access_lock);
 }
