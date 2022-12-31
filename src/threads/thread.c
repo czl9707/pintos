@@ -375,8 +375,8 @@ thread_set_priority (int new_priority)
   int old_priority = thread_get_priority();
 
   enum intr_level old_level = intr_disable();
-  curr->priority.num = new_priority;
   list_remove(&curr->priority.elem);
+  curr->priority.num = new_priority;
   list_insert_ordered(&curr->priorities, &curr->priority.elem, int_elem_bigger_than, NULL);
   intr_set_level(old_level);
 
@@ -570,7 +570,7 @@ next_thread_to_run (void)
   if (list_empty (&ready_list))
     return idle_thread;
   else {
-    list_keep_sorted(&ready_list, thread_elem_comp_priority, NULL);
+    list_sort(&ready_list, thread_elem_comp_priority, NULL);
 
     return list_entry (list_pop_front (&ready_list), struct thread, elem);
   }
@@ -709,11 +709,11 @@ void thread_update_priority (struct thread *t, UNUSED void *aux){
   ASSERT (thread_mlfqs);
   if (t == idle_thread) return;
 
-  enum intr_level old_level = intr_disable();
   int priority = PRI_MAX - FP_ROUND(FP_DIV_INT(t->cpu_time, 4)) - 2 * t->nice;
   if (priority < PRI_MIN) priority = PRI_MIN;
   if (priority > PRI_MAX) priority = PRI_MAX;
 
+  enum intr_level old_level = intr_disable();
   list_remove(&t->priority.elem);
   t->priority.num = priority;
   list_insert_ordered(&t->priorities, &t->priority.elem, int_elem_bigger_than, NULL);

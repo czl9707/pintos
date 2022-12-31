@@ -251,7 +251,11 @@ list_remove (struct list_elem *elem)
   ASSERT (is_interior (elem));
   elem->prev->next = elem->next;
   elem->next->prev = elem->prev;
-  return elem->next;
+
+  struct list_elem *result = elem->next;
+  elem->next = NULL;
+  elem->prev = NULL;
+  return result;
 }
 
 /** Removes the front element from LIST and returns it.
@@ -404,6 +408,8 @@ inplace_merge (struct list_elem *a0, struct list_elem *a1b0,
 void
 list_sort (struct list *list, list_less_func *less, void *aux)
 {
+  if (list_is_sorted(list, less, aux)) return; 
+
   size_t output_run_cnt;        /**< Number of runs output in current pass. */
 
   ASSERT (list != NULL);
@@ -493,13 +499,6 @@ bool list_is_sorted(struct list *list, list_less_func *less, void *aux){
 
   return is_sorted(start, end, less, aux);
 }
-
-void list_keep_sorted(struct list *list, list_less_func *less, void *aux){
-  if (!list_is_sorted(list, less, aux)){
-    list_sort(list, less, aux);
-  }
-}
-
 
 /** Returns the element in LIST with the largest value according
    to LESS given auxiliary data AUX.  If there is more than one

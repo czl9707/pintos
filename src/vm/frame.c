@@ -210,6 +210,7 @@ static void frame_remove(struct frame* phy_frame){
     lock_acquire(&all_frames_access);
     list_remove(&phy_frame->elem);
     lock_release(&all_frames_access);
+    // lock_acquire(&phy_frame->holding_access);
     free(phy_frame);
 }
 

@@ -181,21 +181,14 @@ timer_interrupt (struct intr_frame *args UNUSED)
 {
   ticks++;
  
-  struct list_elem *thread_iter = list_begin(&block_thread_list);
-  struct list_elem *thread_end_iter = list_end(&block_thread_list);
-
-  struct list_elem *to_remove_thread_elem;
+  int size = list_size(&block_thread_list);
   struct thread* thread;
 
-  while (thread_iter != thread_end_iter){
-    thread = list_entry(thread_iter, struct thread, elem);
-
+  for (int i = 0; i < size; i ++){
+    thread = list_entry(list_begin(&block_thread_list), struct thread, elem);
     if (ticks >= thread->wake_up_tick){
-      to_remove_thread_elem = thread_iter;
-      thread_iter = list_next(thread_iter);
-
       enum intr_level old_level = intr_disable();
-      list_remove(to_remove_thread_elem);
+      list_pop_front(&block_thread_list);
       intr_set_level(old_level);
 
       thread_unblock(thread);

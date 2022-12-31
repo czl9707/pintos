@@ -14,8 +14,12 @@ static struct opened_file *get_opened_file_from_fd(fd_t);
 
 // These two function just for vm level use temporarily, 
 // should be removed in future lab.
-void acquire_file_op_lock(void) { lock_acquire(&file_op_lock); }
-void release_file_op_lock(void) { lock_release(&file_op_lock); }
+void acquire_file_op_lock(void) { 
+  lock_acquire(&file_op_lock);
+}
+void release_file_op_lock(void) {
+  lock_release(&file_op_lock);
+}
 
 void userfile_init(void){
     list_init(&opened_files);
@@ -24,23 +28,23 @@ void userfile_init(void){
 }
 
 bool userfile_create (const char *file, unsigned initial_size){
-    lock_acquire(&file_op_lock);
+    acquire_file_op_lock();
     bool result = filesys_create(file, initial_size);
-    lock_release(&file_op_lock);
+    release_file_op_lock();
     return result;
 }
 
 bool userfile_remove (const char *file){
-    lock_acquire(&file_op_lock);
+    acquire_file_op_lock();
     bool result = filesys_remove(file);
-    lock_release(&file_op_lock);
+    release_file_op_lock();
     return result;
 }
 
 fd_t userfile_open (const char *file){
-    lock_acquire(&file_op_lock);
+    acquire_file_op_lock();
     struct file *f = filesys_open(file);
-    lock_release(&file_op_lock);
+    release_file_op_lock();
     if (f == NULL) return -1;
 
     fd_t fd = next_valid_fd();
@@ -59,9 +63,9 @@ fd_t userfile_open (const char *file){
 int userfile_filesize (fd_t fd){
     struct opened_file *of = get_opened_file_from_fd(fd);
     if (of == NULL || of->f == NULL) return -1;
-    lock_acquire(&file_op_lock);
+    acquire_file_op_lock();
     int result = file_length(of->f);
-    lock_release(&file_op_lock);
+    release_file_op_lock();
     return result;
 }
 
@@ -69,9 +73,9 @@ int userfile_read (fd_t fd, void *buffer, unsigned size){
     struct opened_file *of = get_opened_file_from_fd(fd);
     if (of == NULL || of->f == NULL) return -1;
 
-    lock_acquire(&file_op_lock);
+    acquire_file_op_lock();
     int result = file_read(of->f, buffer, size);
-    lock_release(&file_op_lock);
+    release_file_op_lock();
     return result;
 }
 
@@ -79,9 +83,9 @@ int userfile_write (fd_t fd, const void *buffer, unsigned size){
     struct opened_file *of = get_opened_file_from_fd(fd);
     if (of == NULL || of->f == NULL) return -1;
 
-    lock_acquire(&file_op_lock);
+    acquire_file_op_lock();
     int result = file_write(of->f, buffer, size);
-    lock_release(&file_op_lock);
+    release_file_op_lock();
     return result;
 }
 
@@ -107,9 +111,9 @@ void userfile_close (fd_t fd){
     list_remove(&of->elem);
     lock_release(&opened_files_access);
 
-    lock_acquire(&file_op_lock);
+    acquire_file_op_lock();
     file_close(of->f);
-    lock_release(&file_op_lock);
+    release_file_op_lock();
 
     free(of);
 }

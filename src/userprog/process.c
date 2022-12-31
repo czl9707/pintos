@@ -407,7 +407,9 @@ load (const char *file_name, void (**eip) (void), void **esp)
   process_activate ();
 
   /* Open executable file. */
+  acquire_file_op_lock();
   file = filesys_open (file_name);
+  release_file_op_lock();
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
