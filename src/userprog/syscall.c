@@ -195,6 +195,9 @@ static int filesize (fd_t fd){
   (due to a condition other than end of file).  */
 static int read (fd_t fd, void *buffer, unsigned size){
   mem_is_valid(buffer, size);
+  if (!page_is_writable(process_current(), buffer))
+    exit(-1);
+
   if (fd == 0){
     unsigned read_size = 0;
     char c;

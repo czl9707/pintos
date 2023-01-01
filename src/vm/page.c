@@ -114,10 +114,16 @@ bool install_page(struct page_table_entry* pte, struct frame* phy_frame){
 
 struct page_table_entry* find_pte_from_table(struct process* p, void* vir_addr){
     struct page_table_entry pte;
-    pte.vir_addr = vir_addr;
+    pte.vir_addr = pg_round_down(vir_addr);
     struct hash_elem* elem = hash_find(&p->page_table, &pte.elem);
     if (elem == NULL) return NULL;
     return hash_entry(elem, struct page_table_entry, elem);
+}
+
+bool page_is_writable(struct process* p, void* vir_addr){
+    struct page_table_entry* pte = find_pte_from_table(p, vir_addr);
+    ASSERT(pte != NULL);
+    return pte->writable;
 }
 
 unsigned pte_hash_hash_func(const struct hash_elem *elem, UNUSED void* aux){

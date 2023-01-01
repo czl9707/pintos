@@ -38,5 +38,6 @@ unsigned pte_hash_hash_func(const struct hash_elem*, void*);
 bool pte_hash_less_func(const struct hash_elem*, const struct hash_elem*, void*);
 void pte_hash_free_func(struct hash_elem*, void*);
 
+bool page_is_writable(struct process*, void*);
 
 #endif /* vm/page.h */
