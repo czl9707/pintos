@@ -1,6 +1,7 @@
 #include "vm/swap.h"
 #include <bitmap.h>
 #include "devices/block.h"
+#include "threads/palloc.h"
 #include "threads/vaddr.h"
 
 #define SECTOR_PER_PAGE (PGSIZE / BLOCK_SECTOR_SIZE)
@@ -31,6 +32,7 @@ bool swap_out (struct frame* phy_frame){
     }
 
     phy_frame->swap_pos = pos;
+    palloc_free_page(phy_frame->phy_addr);
     phy_frame->phy_addr = NULL;
     lock_release(&swap_device_access);
     return true;

@@ -135,7 +135,7 @@ static struct frame* frame_add(void* phy_addr, struct process* p, void* vir_addr
 static struct frame* frame_get_eviction(void){
     struct frame *f;
 
-    while (true){
+    while (!list_empty(&all_frames)){
         if (clock_hand == all_frames_end){
             clock_hand = list_begin(&all_frames);
         }
@@ -149,6 +149,8 @@ static struct frame* frame_get_eviction(void){
 
         clock_hand = list_next(clock_hand);
     }
+
+    return NULL;
 }
 
 // all_frames_access lock should be acquired before this function called.
@@ -174,18 +176,21 @@ static bool frame_set_bit_if_accessed(struct frame* phy_frame){
 
 static bool frame_evict(UNUSED struct frame* phy_frame){
     struct process_upage_wrapper *p_wrapper;
+    bool evict_success = swap_out(phy_frame);
 
-    lock_acquire(&phy_frame->holding_access);
-    struct list_elem *elem, *end = list_end(&phy_frame->holding);
+    if (evict_success){
+        lock_acquire(&phy_frame->holding_access);
 
-    for (elem = list_begin(&phy_frame->holding); elem != end; elem = list_next(elem)){
-        p_wrapper = list_entry(elem, struct process_upage_wrapper, elem);
-        page_evict(p_wrapper->p, p_wrapper->vir_addr);
+        struct list_elem *elem, *end = list_end(&phy_frame->holding);
+        for (elem = list_begin(&phy_frame->holding); elem != end; elem = list_next(elem)){
+            p_wrapper = list_entry(elem, struct process_upage_wrapper, elem);
+            page_evict(p_wrapper->p, p_wrapper->vir_addr);
+        }
+        
+        lock_release(&phy_frame->holding_access);
     }
 
-    lock_release(&phy_frame->holding_access);
-
-    return swap_out(phy_frame);
+    return evict_success;
 }
 
 static struct frame* frame_find(void* phy_addr){    
@@ -206,6 +211,9 @@ static struct frame* frame_find(void* phy_addr){
 }
 
 static void frame_remove(struct frame* phy_frame){
+    // Edge Case
+    if (&phy_frame->elem == clock_hand) clock_hand = list_next(clock_hand);
+
     palloc_free_page(phy_frame->phy_addr);
     lock_acquire(&all_frames_access);
     list_remove(&phy_frame->elem);

@@ -31,6 +31,7 @@ void pte_add(enum page_type type, struct process* process, struct file* file, vo
 }
 
 void page_evict(struct process* p, void* vir_addr){
+    // sometimes have bug here, but with this line is fine??? weird.
     struct page_table_entry* pte = find_pte_from_table(p, vir_addr);
     uint32_t* pd = p->thread->pagedir;
     pte->present = false;        
@@ -70,6 +71,7 @@ bool load_page(struct process* p, void* vir_addr){
 
 bool load_stack(struct process* p, void* esp, void* vir_addr){
     if (vir_addr < PHYS_BASE - STACK_PG_LIMIT * PGSIZE) return false;
+    if (vir_addr <= esp - PGSIZE) return false;
 
     vir_addr = pg_round_down(vir_addr);
     esp = pg_round_down(esp);

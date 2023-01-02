@@ -600,5 +600,6 @@ static bool
 setup_stack (void **esp) 
 {
   *esp = PHYS_BASE;
-  return load_stack(process_current(), PHYS_BASE, PHYS_BASE - PGSIZE);
+  pte_add(PAGE_STACK, process_current(), NULL, *esp - PGSIZE, true, 0, PGSIZE);
+  return load_page(process_current(), *esp - PGSIZE);
 }
