@@ -85,7 +85,6 @@ bool load_page(struct process* p, void* vir_addr){
 }
 
 bool load_stack(struct process* p, void* esp, void* vir_addr){
-    // printf("load_stack esp %p, vaddr %p\n", esp, vir_addr);
     if (vir_addr < PHYS_BASE - STACK_PG_LIMIT * PGSIZE) return false;
     if (vir_addr <= esp - PGSIZE) return false;
 
