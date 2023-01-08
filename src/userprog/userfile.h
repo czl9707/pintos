@@ -27,6 +27,7 @@ int userfile_write (fd_t, const void *, unsigned);
 void userfile_seek (fd_t , unsigned);
 unsigned userfile_tell (fd_t);
 void userfile_close (fd_t);
+struct file* get_file_by_fd(fd_t);
 
 // These two function just for vm level use temporarily, 
 // should be removed in future lab.

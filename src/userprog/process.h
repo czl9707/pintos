@@ -6,6 +6,7 @@
 #include "threads/thread.h"
 #include "threads/synch.h"
 #include "vm/page.h"
+#include "vm/mmap.h"
 
 typedef int pid_t;
 
@@ -24,6 +25,7 @@ struct process {
     struct list_elem allelem;           /**< Used for all process list */
     struct list_elem elem;              /**< Used for parents children list */
     struct list children;               /**< Keep track of all children processes */
+
     struct hash page_table;             /**< Store memory mapping */
 };
 

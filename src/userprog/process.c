@@ -303,7 +303,6 @@ static void process_clean_up(struct process *p){
   if (p->executable != NULL) file_close(p->executable);
   list_remove(&p->allelem);
   list_remove(&p->elem);
-  clean_opened_file_by_pid(p->pid);
 
   free(p);
 }

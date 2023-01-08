@@ -27,6 +27,12 @@ void userfile_init(void){
     lock_init(&file_op_lock);
 }
 
+struct file* get_file_by_fd(fd_t fd){
+  struct opened_file* of = get_opened_file_from_fd(fd);
+  if (of == NULL) return NULL;
+  return of->f;
+}
+
 bool userfile_create (const char *file, unsigned initial_size){
     acquire_file_op_lock();
     bool result = filesys_create(file, initial_size);

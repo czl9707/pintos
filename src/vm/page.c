@@ -5,11 +5,13 @@
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
 #include "userprog/pagedir.h"
+#include "userprog/userfile.h"
 #include "vm/frame.h"
 
 #define STACK_PG_LIMIT 128
 
 static bool load_file(struct page_table_entry* pte, struct frame* phy_frame);
+static void page_write_back(struct page_table_entry* pte, uint32_t* pd);
 
 void pte_add(enum page_type type, struct process* process, struct file* file, void* vir_addr, bool writable,
             off_t offset, size_t page_read_bytes)
@@ -36,6 +38,19 @@ void page_evict(struct process* p, void* vir_addr){
     uint32_t* pd = p->thread->pagedir;
     pte->present = false;        
     pagedir_clear_page(pd, vir_addr);
+}
+
+void page_remove(struct process* p, void* vir_addr){
+    struct page_table_entry* pte = find_pte_from_table(p, vir_addr);
+    uint32_t* pd = p->thread->pagedir;
+    if (pte->file != NULL && pte->phy_frame != NULL) page_write_back(pte, pd);
+    if (pte->phy_frame != NULL){
+        frame_reduce_holding(pte->phy_frame, p);
+        pagedir_clear_page(pd, vir_addr);
+    }
+    
+    hash_delete(&p->page_table, &pte->elem);
+    free(pte);
 }
 
 bool load_page(struct process* p, void* vir_addr){
@@ -95,14 +110,12 @@ void page_table_destroy(struct process* p){
 }
 
 static bool load_file(struct page_table_entry* pte, struct frame* phy_frame){
-    if (pte->type == PAGE_FILE){
+    if (pte->type == PAGE_FILE || pte->type == PAGE_MMAP){
         ASSERT (pte->file != NULL);
 
-        size_t prev_offset = file_tell(pte->file);
-        file_seek(pte->file, pte->offset);
-        size_t actual_read = file_read(pte->file, phy_frame->phy_addr, pte->page_read_bytes);
+        size_t actual_read = file_read_at(pte->file, phy_frame->phy_addr, 
+            pte->page_read_bytes, pte->offset);
         if (actual_read != pte->page_read_bytes) return false;
-        file_seek(pte->file, prev_offset);
     }
     memset(phy_frame->phy_addr + pte->page_read_bytes, 0, PGSIZE - pte->page_read_bytes);
     return true;
@@ -146,4 +159,20 @@ void pte_hash_free_func(struct hash_elem *elem, UNUSED void* aux){
         frame_reduce_holding(pte->phy_frame, pte->process);
     }
     free(pte);
+}
+
+static void page_write_back(struct page_table_entry* pte, uint32_t* pd){
+    ASSERT(pte->file != NULL);
+    ASSERT(pte->phy_frame != NULL);
+
+    if (!pte->present){
+        if (!frame_reload(pte->phy_frame))
+            PANIC("Not enough pages!");
+    }
+
+    if (pagedir_get_page(pd, pte->vir_addr) != NULL && pagedir_is_dirty(pd, pte->vir_addr)){
+        acquire_file_op_lock();
+        file_write_at (pte->file, pte->vir_addr, pte->page_read_bytes, pte->offset);
+        release_file_op_lock();
+    }
 }

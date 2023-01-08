@@ -12,6 +12,7 @@
 #include "userprog/process.h"
 #include "userprog/pagedir.h"
 #include "userprog/userfile.h"
+#include "vm/mmap.h"
 
 static void syscall_handler(struct intr_frame *);
 static void parse_args(struct intr_frame *, int, void *(*)[]);
@@ -31,6 +32,8 @@ static int write (fd_t, const void *, unsigned);
 static void seek (fd_t , unsigned);
 static unsigned tell (fd_t);
 static void close (fd_t);
+static mapid_t mmap (fd_t fd, void *addr);
+static void munmap (mapid_t mapid);
 
 void syscall_init(void)
 {
@@ -99,8 +102,12 @@ syscall_handler(struct intr_frame *f)
     close(*(fd_t*)args[0]);
     break;
   case SYS_MMAP:
+    parse_args(f, 2, &args);
+    f->eax = mmap(*(fd_t*)args[0], *(void**)args[1]);
     break;
   case SYS_MUNMAP:
+    parse_args(f, 1, &args);
+    munmap(*(mapid_t*)args[0]);
     break;
   case SYS_CHDIR:
     break;
@@ -235,6 +242,20 @@ static unsigned tell (fd_t fd){
 
 static void close (fd_t fd){
   userfile_close(fd);
+}
+
+static mapid_t mmap (fd_t fd, void *addr){
+  if (addr == NULL) return MMAP_ERROR;
+  if (pg_ofs(addr) != 0) return MMAP_ERROR;
+  if (fd == 0 || fd == 1) return MMAP_ERROR;
+
+  struct file* f = get_file_by_fd(fd); 
+  if (f == NULL) return MMAP_ERROR;
+  return mmap_map_file(f, addr);
+}
+
+static void munmap (mapid_t mapid){
+  mmap_unmap_file(mapid);
 }
 
 // *************************** Static helper function ***************************

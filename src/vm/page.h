@@ -7,7 +7,8 @@
 
 enum page_type {
     PAGE_FILE,
-    PAGE_STACK
+    PAGE_STACK,
+    PAGE_MMAP
 };
 
 struct page_table_entry{
@@ -31,6 +32,7 @@ bool load_page(struct process* p, void* vir_addr);
 bool load_stack(struct process* p, void* esp, void* vir_addr);
 void page_table_destroy(struct process* p);
 bool install_page(struct page_table_entry* pte, struct frame* phy_frame);
+void page_remove(struct process* p, void* vir_addr);
 
 struct page_table_entry* find_pte_from_table(struct process* p, void* vir_addr);
 

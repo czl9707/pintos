@@ -13,6 +13,8 @@
 #include "threads/vaddr.h"
 #ifdef USERPROG
 #include "userprog/process.h"
+#include "userprog/userfile.h"
+#include "vm/mmap.h"
 #endif
 
 /** Random value for struct thread's `magic' member.
@@ -305,6 +307,10 @@ thread_exit (void)
 {
   ASSERT (!intr_context ());
   struct thread *t = thread_current();
+
+  // just lazily use tid as pid.
+  clean_opened_file_by_pid(t->tid);
+  mmap_table_clean_up();
 
   intr_disable ();
 #ifdef USERPROG
