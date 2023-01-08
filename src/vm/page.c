@@ -85,23 +85,18 @@ bool load_page(struct process* p, void* vir_addr){
 }
 
 bool load_stack(struct process* p, void* esp, void* vir_addr){
+    // printf("load_stack esp %p, vaddr %p\n", esp, vir_addr);
     if (vir_addr < PHYS_BASE - STACK_PG_LIMIT * PGSIZE) return false;
     if (vir_addr <= esp - PGSIZE) return false;
 
     vir_addr = pg_round_down(vir_addr);
-    esp = pg_round_down(esp);
-
     ASSERT(is_user_vaddr(vir_addr));
-    ASSERT(find_pte_from_table(p, esp) == NULL);
 
-    while (esp > vir_addr){
-        pte_add(PAGE_STACK, p, NULL, esp - PGSIZE, true, 0, PGSIZE);
-        if (!load_page(p, esp - PGSIZE)){
-            return false;
-        }
-
-        esp -= PGSIZE;
+    pte_add(PAGE_STACK, p, NULL, vir_addr, true, 0, PGSIZE);
+    if (!load_page(p, vir_addr)){
+        return false;
     }
+
     return true;
 }
 
